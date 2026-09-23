@@ -1,0 +1,360 @@
+#######################################################################################################################
+# Single-region hub-and-spoke network for us-east-1.                                                                  #
+# IPAM allocates one /22 VPC to each infrastructure account. Each VPC contains two public and two private /24 subnets. #
+#######################################################################################################################
+
+defaultVpc:
+  delete: true
+  excludeAccounts: []
+
+transitGateways:
+  - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+    account: Network
+    region: "{{ HomeRegion }}"
+    shareTargets:
+      organizationalUnits:
+        - Infrastructure
+    asn: {{ TransitGatewayASN }}
+    dnsSupport: enable
+    vpnEcmpSupport: enable
+    defaultRouteTableAssociation: disable
+    defaultRouteTablePropagation: disable
+    autoAcceptSharingAttachments: enable
+    routeTables:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw-rt"
+        routes: []
+
+centralNetworkServices:
+  delegatedAdminAccount: Network
+  gatewayLoadBalancers: []
+  ipams:
+    - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-ipam"
+      region: "{{ HomeRegion }}"
+      description: IP address management for the landing zone
+      operatingRegions:
+        - "{{ HomeRegion }}"
+      scopes: []
+      pools:
+        - name: "{{ AcceleratorPrefix }}-global-pool"
+          description: Landing zone 10.0.0.0/16 pool
+          provisionedCidrs:
+            - "{{ GlobalCidr }}"
+          tags:
+            - key: Accelerator
+              value: "{{ AcceleratorPrefix }}"
+        - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-pool"
+          description: Network account VPC pool
+          locale: "{{ HomeRegion }}"
+          provisionedCidrs:
+            - 10.0.0.0/22
+          sourceIpamPool: "{{ AcceleratorPrefix }}-global-pool"
+          shareTargets:
+            accounts:
+              - Network
+          tags:
+            - key: Accelerator
+              value: "{{ AcceleratorPrefix }}"
+        - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-pool"
+          description: SharedServices account VPC pool
+          locale: "{{ HomeRegion }}"
+          provisionedCidrs:
+            - 10.0.4.0/22
+          sourceIpamPool: "{{ AcceleratorPrefix }}-global-pool"
+          shareTargets:
+            accounts:
+              - SharedServices
+          tags:
+            - key: Accelerator
+              value: "{{ AcceleratorPrefix }}"
+        - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-pool"
+          description: Perimeter account VPC pool
+          locale: "{{ HomeRegion }}"
+          provisionedCidrs:
+            - 10.0.8.0/22
+          sourceIpamPool: "{{ AcceleratorPrefix }}-global-pool"
+          shareTargets:
+            accounts:
+              - Perimeter
+          tags:
+            - key: Accelerator
+              value: "{{ AcceleratorPrefix }}"
+
+vpcs:
+  - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network"
+    account: Network
+    region: "{{ HomeRegion }}"
+    ipamAllocations:
+      - ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-pool"
+        netmaskLength: 22
+    defaultSecurityGroupRulesDeletion: true
+    internetGateway: true
+    enableDnsHostnames: true
+    enableDnsSupport: true
+    instanceTenancy: default
+    routeTables:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-rt-public-a"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: internetGateway
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-rt-public-b"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: internetGateway
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-rt-private-a"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: natGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-nat-a"
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-rt-private-b"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: natGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-nat-a"
+    subnets:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-public-a"
+        availabilityZone: a
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-rt-public-a"
+        mapPublicIpOnLaunch: true
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-pool"
+          netmaskLength: 24
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-public-b"
+        availabilityZone: b
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-rt-public-b"
+        mapPublicIpOnLaunch: true
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-pool"
+          netmaskLength: 24
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-private-a"
+        availabilityZone: a
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-rt-private-a"
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-pool"
+          netmaskLength: 24
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-private-b"
+        availabilityZone: b
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-rt-private-b"
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-pool"
+          netmaskLength: 24
+    natGateways:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-nat-a"
+        subnet: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-public-a"
+    transitGatewayAttachments:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network"
+        transitGateway:
+          name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          account: Network
+        routeTableAssociations:
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw-rt"
+        routeTablePropagations:
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw-rt"
+        subnets:
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-private-a"
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-network-private-b"
+
+  - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices"
+    account: SharedServices
+    region: "{{ HomeRegion }}"
+    ipamAllocations:
+      - ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-pool"
+        netmaskLength: 22
+    defaultSecurityGroupRulesDeletion: true
+    internetGateway: true
+    enableDnsHostnames: true
+    enableDnsSupport: true
+    instanceTenancy: default
+    routeTables:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-rt-public-a"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: internetGateway
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-rt-public-b"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: internetGateway
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-rt-private-a"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: natGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-nat-a"
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-rt-private-b"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: natGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-nat-a"
+    subnets:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-public-a"
+        availabilityZone: a
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-rt-public-a"
+        mapPublicIpOnLaunch: true
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-pool"
+          netmaskLength: 24
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-public-b"
+        availabilityZone: b
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-rt-public-b"
+        mapPublicIpOnLaunch: true
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-pool"
+          netmaskLength: 24
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-private-a"
+        availabilityZone: a
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-rt-private-a"
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-pool"
+          netmaskLength: 24
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-private-b"
+        availabilityZone: b
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-rt-private-b"
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-pool"
+          netmaskLength: 24
+    natGateways:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-nat-a"
+        subnet: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-public-a"
+    transitGatewayAttachments:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices"
+        transitGateway:
+          name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          account: Network
+        routeTableAssociations:
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw-rt"
+        routeTablePropagations:
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw-rt"
+        subnets:
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-private-a"
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-sharedservices-private-b"
+
+  - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter"
+    account: Perimeter
+    region: "{{ HomeRegion }}"
+    ipamAllocations:
+      - ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-pool"
+        netmaskLength: 22
+    defaultSecurityGroupRulesDeletion: true
+    internetGateway: true
+    enableDnsHostnames: true
+    enableDnsSupport: true
+    instanceTenancy: default
+    routeTables:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-rt-public-a"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: internetGateway
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-rt-public-b"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: internetGateway
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-rt-private-a"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: natGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-nat-a"
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-rt-private-b"
+        routes:
+          - name: Internal
+            destination: "{{ GlobalCidr }}"
+            type: transitGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          - name: Internet
+            destination: 0.0.0.0/0
+            type: natGateway
+            target: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-nat-a"
+    subnets:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-public-a"
+        availabilityZone: a
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-rt-public-a"
+        mapPublicIpOnLaunch: true
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-pool"
+          netmaskLength: 24
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-public-b"
+        availabilityZone: b
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-rt-public-b"
+        mapPublicIpOnLaunch: true
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-pool"
+          netmaskLength: 24
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-private-a"
+        availabilityZone: a
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-rt-private-a"
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-pool"
+          netmaskLength: 24
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-private-b"
+        availabilityZone: b
+        routeTable: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-rt-private-b"
+        ipamAllocation:
+          ipamPoolName: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-pool"
+          netmaskLength: 24
+    natGateways:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-nat-a"
+        subnet: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-public-a"
+    transitGatewayAttachments:
+      - name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter"
+        transitGateway:
+          name: "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw"
+          account: Network
+        routeTableAssociations:
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw-rt"
+        routeTablePropagations:
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-tgw-rt"
+        subnets:
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-private-a"
+          - "{{ AcceleratorPrefix }}-{{ HomeRegion }}-perimeter-private-b"
